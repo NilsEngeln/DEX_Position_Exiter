@@ -383,11 +383,14 @@ interface ITokenAllowanceGuard {
 - **Historical Data**: The Graph subgraph
 - **Volatility**: Custom calculation from on-chain data
 
-### Supported Networks (Initial)
-- Base (primary - low fees, Coinbase ecosystem)
-- Arbitrum
-- Optimism
-- Ethereum Mainnet (for high-value positions)
+### Supported Networks
+
+| Network | Purpose | Status |
+|---------|---------|--------|
+| Ethereum Sepolia | Testing & Development | Primary testnet |
+| Base | Production | Primary mainnet (planned) |
+| Arbitrum | Production | Future expansion |
+| Optimism | Production | Future expansion |
 
 ## API Specification
 
@@ -441,33 +444,36 @@ Cancel an active order (returns tokens minus gas used).
 
 Get cost estimate without creating order.
 
-## Open Questions
+## Design Decisions (Confirmed)
 
-1. **Hook vs Keeper Architecture**: Should position closing be triggered by:
-   - Hook's afterSwap (more gas efficient, but adds overhead to every swap)
-   - External keeper network (more flexible, but requires incentivization)
-   - Hybrid approach?
+| Decision | Choice | Rationale |
+|----------|--------|-----------|
+| **Position Closing** | Hook-based (`afterSwap`) | Simpler architecture, no external dependencies, gas overhead acceptable for V4 pools |
+| **Fee Structure** | Flat fee ($1 per order) | Simple for testing, easy to understand, predictable costs |
+| **Partial Fills** | Return the mix | User gets whatever ratio exists at deadline (e.g., 60% USDC, 40% CoinX) |
+| **Test Network** | Ethereum Sepolia | Uniswap V4 testnet is on Sepolia |
+| **Production Network** | Base (primary) | Low fees, Coinbase ecosystem aligns with x402 |
+| **Token Support** | Any token pair | No whitelist, support any V4 pool |
 
-2. **Multi-hop Exits**: Should we support exits through multiple pools for better routing?
+## Open Questions (Remaining)
 
-3. **Partial Fills**: How to handle positions that only partially fill before deadline?
+1. **Multi-hop Exits**: Should we support exits through multiple pools for better routing?
+   - *Current: No, single pool only for v1*
 
-4. **MEV Protection**: How to protect users from sandwich attacks during position creation?
-
-5. **Fee Structure**: Flat fee vs percentage-based vs tiered?
+2. **MEV Protection**: How to protect users from sandwich attacks during position creation?
+   - *Consideration: Position creation is less vulnerable since we're adding liquidity, not swapping*
 
 ## Next Steps
 
-1. [ ] Finalize architecture decisions (answer open questions)
-2. [ ] Design detailed smart contract interfaces
-3. [ ] Prototype tick calculation algorithm
-4. [ ] Set up development environment (Foundry + local node)
-5. [ ] Implement core smart contracts
-6. [ ] Build API server with x402 integration
-7. [ ] Testing (unit, integration, mainnet fork)
-8. [ ] Security audit
-9. [ ] Testnet deployment
-10. [ ] Mainnet launch
+1. [x] Finalize architecture decisions
+2. [x] Design detailed smart contract interfaces
+3. [ ] Set up development environment (Foundry + Node.js)
+4. [ ] Implement core smart contracts
+5. [ ] Build API server with x402 integration
+6. [ ] Testing (unit, integration, Sepolia fork)
+7. [ ] Security audit
+8. [ ] Sepolia testnet deployment
+9. [ ] Base mainnet launch
 
 ---
 

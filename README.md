@@ -29,8 +29,31 @@ The service:
 
 - **Smart Contracts**: Solidity 0.8.26+, Foundry, Uniswap V4 hooks
 - **Backend**: Node.js, TypeScript, Express, x402 middleware
-- **Database**: PostgreSQL
-- **Networks**: Base (primary), Arbitrum, Optimism, Ethereum
+- **Database**: PostgreSQL (planned)
+- **Networks**: Ethereum Sepolia (testing), Base (production)
+
+## Project Structure
+
+```
+DEX_Position_Exiter/
+├── contracts/           # Solidity smart contracts (Foundry)
+│   ├── src/            # Contract source files
+│   │   ├── interfaces/ # Contract interfaces
+│   │   └── PositionExiterHook.sol
+│   ├── test/           # Contract tests
+│   └── foundry.toml    # Foundry configuration
+├── api/                # Express.js API server
+│   ├── src/
+│   │   ├── routes/     # API endpoints
+│   │   ├── services/   # Business logic
+│   │   ├── middleware/ # x402, error handling
+│   │   ├── types/      # TypeScript types
+│   │   └── utils/      # Helpers
+│   └── package.json
+└── docs/               # Documentation
+    ├── ARCHITECTURE.md
+    └── TECHNICAL_SPEC.md
+```
 
 ## Documentation
 
@@ -39,16 +62,32 @@ The service:
 
 ## Project Status
 
-**Phase: Research & Architecture** (Current)
+**Phase: Development Setup** (Current)
 
 - [x] Research x402 payment protocol
 - [x] Research Uniswap V4 hooks architecture
 - [x] Design system architecture
 - [x] Define smart contract interfaces
-- [ ] Prototype tick calculation algorithm
-- [ ] Implement smart contracts
-- [ ] Build API server
-- [ ] Testing & audits
+- [x] Set up Foundry project structure
+- [x] Set up Node.js/TypeScript API structure
+- [x] Create initial contract scaffolding
+- [ ] Implement full Uniswap V4 integration
+- [ ] Build API server with database
+- [ ] Testing (unit, integration, fork tests)
+- [ ] Deploy to Sepolia testnet
+- [ ] Security audit
+- [ ] Deploy to Base mainnet
+
+## Design Decisions
+
+| Decision | Choice |
+|----------|--------|
+| Position Closing | Hook-based (`afterSwap` monitoring) |
+| Fee Structure | Flat fee ($1 per order) |
+| Partial Fills | Return mix at deadline |
+| Test Network | Ethereum Sepolia |
+| Production Network | Base |
+| Token Support | Any token pair with V4 pool |
 
 ## Key Components
 
