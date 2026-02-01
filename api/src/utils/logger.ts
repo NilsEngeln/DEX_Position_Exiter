@@ -2,11 +2,19 @@ import winston from "winston";
 
 const { combine, timestamp, printf, colorize, errors } = winston.format;
 
+// Custom replacer to handle BigInt serialization
+const bigIntReplacer = (_key: string, value: unknown): unknown => {
+  if (typeof value === "bigint") {
+    return value.toString();
+  }
+  return value;
+};
+
 const logFormat = printf(({ level, message, timestamp, ...metadata }) => {
   let msg = `${timestamp} [${level}]: ${message}`;
 
   if (Object.keys(metadata).length > 0) {
-    msg += ` ${JSON.stringify(metadata)}`;
+    msg += ` ${JSON.stringify(metadata, bigIntReplacer)}`;
   }
 
   return msg;
