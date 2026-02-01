@@ -3,15 +3,19 @@ pragma solidity ^0.8.26;
 
 import {BaseHook} from "@uniswap/v4-periphery/src/base/hooks/BaseHook.sol";
 import {IPoolManager} from "@uniswap/v4-core/src/interfaces/IPoolManager.sol";
+import {IUnlockCallback} from "@uniswap/v4-core/src/interfaces/callback/IUnlockCallback.sol";
 import {PoolKey} from "@uniswap/v4-core/src/types/PoolKey.sol";
 import {PoolId, PoolIdLibrary} from "@uniswap/v4-core/src/types/PoolId.sol";
-import {BalanceDelta} from "@uniswap/v4-core/src/types/BalanceDelta.sol";
+import {BalanceDelta, toBalanceDelta} from "@uniswap/v4-core/src/types/BalanceDelta.sol";
 import {BeforeSwapDelta, BeforeSwapDeltaLibrary} from "@uniswap/v4-core/src/types/BeforeSwapDelta.sol";
 import {Currency, CurrencyLibrary} from "@uniswap/v4-core/src/types/Currency.sol";
 import {StateLibrary} from "@uniswap/v4-core/src/libraries/StateLibrary.sol";
+import {TransientStateLibrary} from "@uniswap/v4-core/src/libraries/TransientStateLibrary.sol";
 import {TickMath} from "@uniswap/v4-core/src/libraries/TickMath.sol";
 import {FullMath} from "@uniswap/v4-core/src/libraries/FullMath.sol";
+import {LiquidityAmounts} from "@uniswap/v4-core/test/utils/LiquidityAmounts.sol";
 import {Hooks} from "@uniswap/v4-core/src/libraries/Hooks.sol";
+import {CurrencySettler} from "@uniswap/v4-periphery/src/libraries/CurrencySettler.sol";
 import {IERC20} from "@openzeppelin/contracts/token/ERC20/IERC20.sol";
 import {SafeERC20} from "@openzeppelin/contracts/token/ERC20/utils/SafeERC20.sol";
 import {ReentrancyGuard} from "@openzeppelin/contracts/utils/ReentrancyGuard.sol";
@@ -22,11 +26,13 @@ import {IPositionExiterHook} from "./interfaces/IPositionExiterHook.sol";
 /// @notice A Uniswap V4 hook that enables intelligent, low-impact token exits
 ///         through single-sided LP positions that auto-close when filled
 /// @dev Implements afterSwap hook to monitor price movements and close filled positions
-contract PositionExiterHook is BaseHook, IPositionExiterHook, ReentrancyGuard {
+contract PositionExiterHook is BaseHook, IPositionExiterHook, IUnlockCallback, ReentrancyGuard {
     using PoolIdLibrary for PoolKey;
     using CurrencyLibrary for Currency;
     using SafeERC20 for IERC20;
     using StateLibrary for IPoolManager;
+    using TransientStateLibrary for IPoolManager;
+    using CurrencySettler for Currency;
 
     // ═══════════════════════════════════════════════════════════════════════════
     // CONSTANTS
@@ -59,6 +65,36 @@ contract PositionExiterHook is BaseHook, IPositionExiterHook, ReentrancyGuard {
 
     /// @notice Address to receive service fees
     address public feeRecipient;
+
+    // ═══════════════════════════════════════════════════════════════════════════
+    // CALLBACK DATA TYPES
+    // ═══════════════════════════════════════════════════════════════════════════
+
+    /// @notice Callback action types
+    enum CallbackAction {
+        AddLiquidity,
+        RemoveLiquidity
+    }
+
+    /// @notice Data passed to unlock callback for adding liquidity
+    struct AddLiquidityCallbackData {
+        bytes32 orderId;
+        PoolKey poolKey;
+        int24 tickLower;
+        int24 tickUpper;
+        uint256 amount0;
+        uint256 amount1;
+        address sender;
+    }
+
+    /// @notice Data passed to unlock callback for removing liquidity
+    struct RemoveLiquidityCallbackData {
+        bytes32 orderId;
+        PoolKey poolKey;
+        int24 tickLower;
+        int24 tickUpper;
+        uint128 liquidity;
+    }
 
     // ═══════════════════════════════════════════════════════════════════════════
     // CONSTRUCTOR
@@ -409,29 +445,180 @@ contract PositionExiterHook is BaseHook, IPositionExiterHook, ReentrancyGuard {
         }
     }
 
-    /// @notice Add liquidity to the pool
-    /// @dev This is a placeholder - actual implementation requires unlock callback pattern
+    /// @notice Callback from PoolManager.unlock()
+    /// @dev This is called by the PoolManager after we call unlock()
+    function unlockCallback(bytes calldata data) external override returns (bytes memory) {
+        require(msg.sender == address(poolManager), "Only PoolManager");
+
+        (CallbackAction action, bytes memory callbackData) = abi.decode(data, (CallbackAction, bytes));
+
+        if (action == CallbackAction.AddLiquidity) {
+            return _handleAddLiquidityCallback(callbackData);
+        } else if (action == CallbackAction.RemoveLiquidity) {
+            return _handleRemoveLiquidityCallback(callbackData);
+        }
+
+        revert("Unknown action");
+    }
+
+    /// @notice Handle the add liquidity callback
+    function _handleAddLiquidityCallback(bytes memory data) internal returns (bytes memory) {
+        AddLiquidityCallbackData memory callbackData = abi.decode(data, (AddLiquidityCallbackData));
+
+        // Calculate liquidity from amounts
+        (, int24 currentTick,,) = poolManager.getSlot0(callbackData.poolKey.toId());
+        uint160 sqrtPriceX96 = TickMath.getSqrtPriceAtTick(currentTick);
+        uint160 sqrtPriceLowerX96 = TickMath.getSqrtPriceAtTick(callbackData.tickLower);
+        uint160 sqrtPriceUpperX96 = TickMath.getSqrtPriceAtTick(callbackData.tickUpper);
+
+        uint128 liquidity = LiquidityAmounts.getLiquidityForAmounts(
+            sqrtPriceX96,
+            sqrtPriceLowerX96,
+            sqrtPriceUpperX96,
+            callbackData.amount0,
+            callbackData.amount1
+        );
+
+        // Modify position (add liquidity)
+        (BalanceDelta delta,) = poolManager.modifyLiquidity(
+            callbackData.poolKey,
+            IPoolManager.ModifyLiquidityParams({
+                tickLower: callbackData.tickLower,
+                tickUpper: callbackData.tickUpper,
+                liquidityDelta: int256(uint256(liquidity)),
+                salt: callbackData.orderId
+            }),
+            ""
+        );
+
+        // Settle tokens with the PoolManager
+        // delta.amount0() is negative when we owe tokens to the pool
+        if (delta.amount0() < 0) {
+            callbackData.poolKey.currency0.settle(
+                poolManager,
+                address(this),
+                uint256(-int256(delta.amount0())),
+                false // not using claims
+            );
+        }
+        if (delta.amount1() < 0) {
+            callbackData.poolKey.currency1.settle(
+                poolManager,
+                address(this),
+                uint256(-int256(delta.amount1())),
+                false
+            );
+        }
+
+        return abi.encode(liquidity);
+    }
+
+    /// @notice Handle the remove liquidity callback
+    function _handleRemoveLiquidityCallback(bytes memory data) internal returns (bytes memory) {
+        RemoveLiquidityCallbackData memory callbackData = abi.decode(data, (RemoveLiquidityCallbackData));
+
+        // Remove liquidity (negative liquidityDelta)
+        (BalanceDelta delta,) = poolManager.modifyLiquidity(
+            callbackData.poolKey,
+            IPoolManager.ModifyLiquidityParams({
+                tickLower: callbackData.tickLower,
+                tickUpper: callbackData.tickUpper,
+                liquidityDelta: -int256(uint256(callbackData.liquidity)),
+                salt: callbackData.orderId
+            }),
+            ""
+        );
+
+        // Take tokens from the PoolManager
+        // delta.amount0() is positive when pool owes us tokens
+        uint256 amount0Out = 0;
+        uint256 amount1Out = 0;
+
+        if (delta.amount0() > 0) {
+            amount0Out = uint256(int256(delta.amount0()));
+            callbackData.poolKey.currency0.take(
+                poolManager,
+                address(this),
+                amount0Out,
+                false
+            );
+        }
+        if (delta.amount1() > 0) {
+            amount1Out = uint256(int256(delta.amount1()));
+            callbackData.poolKey.currency1.take(
+                poolManager,
+                address(this),
+                amount1Out,
+                false
+            );
+        }
+
+        return abi.encode(amount0Out, amount1Out);
+    }
+
+    /// @notice Add liquidity to the pool using unlock callback pattern
     function _addLiquidity(bytes32 orderId, CreateOrderParams calldata params)
         internal
         returns (uint128 liquidity)
     {
-        // TODO: Implement using PoolManager.unlock() callback pattern
-        // This requires implementing the unlockCallback function
-        // For now, return placeholder
-        orderId; // silence unused warning
-        params;  // silence unused warning
-        return 0;
+        ExitOrder storage order = orders[orderId];
+
+        // Approve tokens to PoolManager
+        Currency currency0 = params.poolKey.currency0;
+        Currency currency1 = params.poolKey.currency1;
+
+        if (!currency0.isAddressZero() && order.token0Deposited > 0) {
+            IERC20(Currency.unwrap(currency0)).approve(address(poolManager), order.token0Deposited);
+        }
+        if (!currency1.isAddressZero() && order.token1Deposited > 0) {
+            IERC20(Currency.unwrap(currency1)).approve(address(poolManager), order.token1Deposited);
+        }
+
+        // Prepare callback data
+        AddLiquidityCallbackData memory callbackData = AddLiquidityCallbackData({
+            orderId: orderId,
+            poolKey: params.poolKey,
+            tickLower: params.tickLower,
+            tickUpper: params.tickUpper,
+            amount0: order.token0Deposited,
+            amount1: order.token1Deposited,
+            sender: msg.sender
+        });
+
+        // Call unlock which will call our unlockCallback
+        bytes memory result = poolManager.unlock(
+            abi.encode(CallbackAction.AddLiquidity, abi.encode(callbackData))
+        );
+
+        liquidity = abi.decode(result, (uint128));
     }
 
-    /// @notice Remove liquidity from the pool
-    /// @dev This is a placeholder - actual implementation requires unlock callback pattern
+    /// @notice Remove liquidity from the pool using unlock callback pattern
     function _removeLiquidity(bytes32 orderId)
         internal
         returns (CloseResult memory result)
     {
-        // TODO: Implement using PoolManager.unlock() callback pattern
-        orderId; // silence unused warning
-        return result;
+        ExitOrder storage order = orders[orderId];
+
+        // Prepare callback data
+        RemoveLiquidityCallbackData memory callbackData = RemoveLiquidityCallbackData({
+            orderId: orderId,
+            poolKey: order.poolKey,
+            tickLower: order.tickLower,
+            tickUpper: order.tickUpper,
+            liquidity: order.liquidity
+        });
+
+        // Call unlock which will call our unlockCallback
+        bytes memory callbackResult = poolManager.unlock(
+            abi.encode(CallbackAction.RemoveLiquidity, abi.encode(callbackData))
+        );
+
+        (result.token0Out, result.token1Out) = abi.decode(callbackResult, (uint256, uint256));
+
+        // Calculate fees (simplified - in production would track fee growth)
+        result.feesEarned0 = 0;
+        result.feesEarned1 = 0;
     }
 
     /// @notice Get current token amounts in a position
@@ -440,9 +627,23 @@ contract PositionExiterHook is BaseHook, IPositionExiterHook, ReentrancyGuard {
         view
         returns (uint256 token0, uint256 token1)
     {
-        // TODO: Implement position amount calculation
-        orderId; // silence unused warning
-        return (0, 0);
+        ExitOrder storage order = orders[orderId];
+
+        // Get position info from PoolManager
+        PoolId poolId = order.poolKey.toId();
+        (, int24 currentTick,,) = poolManager.getSlot0(poolId);
+
+        // Calculate amounts based on current tick and liquidity
+        uint160 sqrtPriceX96 = TickMath.getSqrtPriceAtTick(currentTick);
+        uint160 sqrtPriceLowerX96 = TickMath.getSqrtPriceAtTick(order.tickLower);
+        uint160 sqrtPriceUpperX96 = TickMath.getSqrtPriceAtTick(order.tickUpper);
+
+        (token0, token1) = LiquidityAmounts.getAmountsForLiquidity(
+            sqrtPriceX96,
+            sqrtPriceLowerX96,
+            sqrtPriceUpperX96,
+            order.liquidity
+        );
     }
 
     /// @notice Transfer tokens out to recipient
