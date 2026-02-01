@@ -50,9 +50,50 @@ DEX_Position_Exiter/
 │   │   ├── types/      # TypeScript types
 │   │   └── utils/      # Helpers
 │   └── package.json
+├── frontend/           # Vite + TypeScript frontend
+│   └── src/
 └── docs/               # Documentation
     ├── ARCHITECTURE.md
     └── TECHNICAL_SPEC.md
+```
+
+## Quick Start
+
+### Prerequisites
+- Node.js 20+
+- npm or yarn
+
+### Run Development Servers
+
+**Option 1: Single command**
+```bash
+./start-dev.sh
+```
+
+**Option 2: Manual (two terminals)**
+
+Terminal 1 - API:
+```bash
+cd api && npm install && npm run dev
+```
+
+Terminal 2 - Frontend:
+```bash
+cd frontend && npm install && npm run dev
+```
+
+Then open http://localhost:5173 in your browser.
+
+### Test the API
+
+```bash
+# Health check
+curl http://localhost:3000/health
+
+# Get estimate
+curl -X POST http://localhost:3000/api/v1/estimate \
+  -H "Content-Type: application/json" \
+  -d '{"tokenSell":"0xfFf9976782d46CC05630D1f6eBAb18b2324d6B14","tokenBuy":"0x1c7D4B196Cb0C7B01d743Fbc6116a902379C7238","amount":"1000000000000000000","timeframeDays":7,"network":"sepolia"}'
 ```
 
 ## Documentation
