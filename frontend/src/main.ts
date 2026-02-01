@@ -15,7 +15,8 @@ import { sepolia } from "viem/chains";
 // CONFIGURATION
 // ═══════════════════════════════════════════════════════════════════════════
 
-const API_BASE_URL = import.meta.env.VITE_API_URL || "http://localhost:3000";
+// Use empty string to use relative URLs (goes through Vite proxy in dev)
+const API_BASE_URL = import.meta.env.VITE_API_URL || "";
 
 // Test token addresses on Sepolia
 const TEST_TOKENS = {
