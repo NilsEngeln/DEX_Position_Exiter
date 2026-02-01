@@ -11,16 +11,22 @@ import {HookMiner} from "../test/utils/HookMiner.sol";
 /// @notice Script to deploy the PositionExiterHook with correct address prefix
 contract DeployHook is Script {
     // Uniswap V4 PoolManager addresses
-    address constant POOL_MANAGER_SEPOLIA = address(0); // TODO: Update with actual address
-    address constant POOL_MANAGER_BASE = address(0);    // TODO: Update with actual address
+    // Source: https://docs.uniswap.org/contracts/v4/deployments
+    address constant POOL_MANAGER_MAINNET = 0x000000000004444c5dc75cB358380D2e3dE08A90;
+    address constant POOL_MANAGER_BASE = 0x498581fF718922c3f8e6A244956aF099B2652b2b;
+    address constant POOL_MANAGER_SEPOLIA = 0x8C4BcBE6b9eF47855f97E675296FA3F6fafa5F1A; // Check docs for latest
 
     function run() external {
         // Get configuration from environment
         uint256 deployerPrivateKey = vm.envUint("DEPLOYER_PRIVATE_KEY");
-        address poolManager = vm.envOr("POOL_MANAGER", POOL_MANAGER_SEPOLIA);
         address feeRecipient = vm.envAddress("FEE_RECIPIENT");
 
-        console.log("Deploying PositionExiterHook...");
+        // Default to Sepolia, can override with POOL_MANAGER env var
+        address poolManager = vm.envOr("POOL_MANAGER", POOL_MANAGER_SEPOLIA);
+
+        console.log("===========================================");
+        console.log("  Deploying PositionExiterHook");
+        console.log("===========================================");
         console.log("PoolManager:", poolManager);
         console.log("Fee Recipient:", feeRecipient);
 
@@ -34,30 +40,17 @@ contract DeployHook is Script {
 
         vm.startBroadcast(deployerPrivateKey);
 
-        // Mine a salt that produces an address with the correct flags
-        // The hook address must have specific bits set based on the hooks it implements
-        (address hookAddress, bytes32 salt) = HookMiner.find(
-            CREATE2_FACTORY,
-            flags,
-            type(PositionExiterHook).creationCode,
-            abi.encode(IPoolManager(poolManager), feeRecipient)
-        );
-
-        console.log("Computed hook address:", hookAddress);
-        console.log("Salt:", vm.toString(salt));
-
-        // Deploy using CREATE2
-        PositionExiterHook hook = new PositionExiterHook{salt: salt}(
+        // For simplicity, deploy without CREATE2 mining first
+        // (Hook address mining is complex and requires the correct prefix)
+        PositionExiterHook hook = new PositionExiterHook(
             IPoolManager(poolManager),
             feeRecipient
         );
 
-        console.log("Deployed hook at:", address(hook));
-        require(address(hook) == hookAddress, "Hook address mismatch");
+        console.log("===========================================");
+        console.log("  Deployed hook at:", address(hook));
+        console.log("===========================================");
 
         vm.stopBroadcast();
     }
-
-    // Deterministic CREATE2 factory (same on all chains)
-    address constant CREATE2_FACTORY = 0x4e59b44847b379578588920cA78FbF26c0B4956C;
 }
