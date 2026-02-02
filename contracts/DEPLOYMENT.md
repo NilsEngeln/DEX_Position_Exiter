@@ -18,10 +18,17 @@
 cd contracts
 
 # Install Uniswap V4 and OpenZeppelin
-forge install uniswap/v4-core --no-commit
-forge install uniswap/v4-periphery --no-commit
-forge install openzeppelin/openzeppelin-contracts --no-commit
-forge install foundry-rs/forge-std --no-commit
+# Note: Use --no-git flag (not --no-commit) in newer Foundry versions
+forge install uniswap/v4-core --no-git
+forge install uniswap/v4-periphery --no-git
+forge install openzeppelin/openzeppelin-contracts --no-git
+forge install foundry-rs/forge-std --no-git
+
+# If the above still fails, try without any flags:
+# forge install uniswap/v4-core
+# forge install uniswap/v4-periphery
+# forge install openzeppelin/openzeppelin-contracts
+# forge install foundry-rs/forge-std
 ```
 
 ## Step 2: Set Environment Variables
