@@ -477,6 +477,23 @@ Get cost estimate without creating order.
 
 ---
 
+## Integration Status (as of Feb 2026)
+
+### What's Wired Together
+- Frontend → API: Vite proxy routes `/api/*` and `/health` to Express on port 3000
+- API routes: All 5 endpoints accept requests and validate with Zod
+- x402 middleware: Returns 402 → accepts mock payment in dev mode
+- Smart contracts: 32 tests pass against real Uniswap V4 PoolManager
+
+### What's NOT Wired Together
+- **API → Chain**: OrderService and TickCalculator return mock/hardcoded data. No viem contract client instantiated. No ABI imported. No transactions sent.
+- **Frontend → Chain**: No ERC20 approval flow. No direct contract reads. Amount input is raw wei.
+- **Contracts → Network**: Not deployed to Anvil, Sepolia, or any network.
+
+### Next Step: See [POC_ROADMAP.md](./POC_ROADMAP.md)
+
+---
+
 ## References
 
 - [x402 Protocol - Coinbase](https://www.x402.org/)
