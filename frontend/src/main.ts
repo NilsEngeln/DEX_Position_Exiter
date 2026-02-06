@@ -4,42 +4,53 @@ import {
   custom,
   http,
   formatUnits,
-  parseUnits,
   type Address,
   type WalletClient,
   type PublicClient,
+  defineChain,
 } from "viem";
-import { sepolia } from "viem/chains";
+
+import { ANVIL_ADDRESSES } from "./abi/addresses.js";
+import { ERC20ABI } from "./abi/ERC20.js";
 
 // ═══════════════════════════════════════════════════════════════════════════
 // CONFIGURATION
 // ═══════════════════════════════════════════════════════════════════════════
 
-// Use empty string to use relative URLs (goes through Vite proxy in dev)
 const API_BASE_URL = import.meta.env.VITE_API_URL || "";
 
-// Test token addresses on Sepolia
-const TEST_TOKENS = {
-  // These are example addresses - replace with actual deployed test tokens
-  USDC: "0x1c7D4B196Cb0C7B01d743Fbc6116a902379C7238", // Circle USDC on Sepolia
-  WETH: "0xfFf9976782d46CC05630D1f6eBAb18b2324d6B14", // WETH on Sepolia
+// Anvil local chain
+const anvil = defineChain({
+  id: 31337,
+  name: "Anvil",
+  nativeCurrency: { name: "Ether", symbol: "ETH", decimals: 18 },
+  rpcUrls: {
+    default: { http: ["http://127.0.0.1:8545"] },
+  },
+});
+
+// Deployed token info on Anvil
+const TOKENS: Record<string, { address: Address; symbol: string; decimals: number }> = {
+  TOKEN0: { address: ANVIL_ADDRESSES.token0, symbol: "WETH", decimals: 18 },
+  TOKEN1: { address: ANVIL_ADDRESSES.token1, symbol: "USDC", decimals: 6 },
 };
 
 // ═══════════════════════════════════════════════════════════════════════════
 // STATE
 // ═══════════════════════════════════════════════════════════════════════════
 
+// @ts-ignore - walletClient stored for future wallet-based transactions
 let walletClient: WalletClient | null = null;
 let publicClient: PublicClient | null = null;
 let connectedAddress: Address | null = null;
 
-// Store orders locally for demo
 const localOrders: Array<{
   orderId: string;
   status: string;
   fillPercent: number;
   createdAt: string;
   deadline: string;
+  txHash?: string;
 }> = [];
 
 // ═══════════════════════════════════════════════════════════════════════════
@@ -59,7 +70,6 @@ const statusResult = document.getElementById("statusResult") as HTMLDivElement;
 const ordersList = document.getElementById("ordersList") as HTMLDivElement;
 const apiStatus = document.getElementById("apiStatus") as HTMLSpanElement;
 
-// Form inputs
 const tokenSellInput = document.getElementById("tokenSell") as HTMLInputElement;
 const tokenBuyInput = document.getElementById("tokenBuy") as HTMLInputElement;
 const amountInput = document.getElementById("amount") as HTMLInputElement;
@@ -77,10 +87,9 @@ async function connectWallet(): Promise<void> {
   }
 
   try {
-    // Request account access
-    const accounts = await window.ethereum.request({
+    const accounts = (await window.ethereum.request({
       method: "eth_requestAccounts",
-    }) as Address[];
+    })) as Address[];
 
     if (accounts.length === 0) {
       throw new Error("No accounts found");
@@ -88,29 +97,27 @@ async function connectWallet(): Promise<void> {
 
     connectedAddress = accounts[0];
 
-    // Create clients
     walletClient = createWalletClient({
       account: connectedAddress,
-      chain: sepolia,
+      chain: anvil,
       transport: custom(window.ethereum),
     });
 
     publicClient = createPublicClient({
-      chain: sepolia,
-      transport: http(),
+      chain: anvil,
+      transport: http("http://127.0.0.1:8545"),
     });
 
-    // Update UI
     updateConnectionUI(true);
 
-    // Check network
+    // Switch to Anvil if needed
     const chainId = await window.ethereum.request({ method: "eth_chainId" });
-    if (chainId !== "0xaa36a7") {
-      // Sepolia chain ID
-      await switchToSepolia();
+    if (chainId !== "0x7a69") {
+      await switchToAnvil();
     }
 
-    // Load orders
+    // Show balances
+    await showBalances();
     await loadOrders();
   } catch (error) {
     console.error("Failed to connect wallet:", error);
@@ -118,28 +125,59 @@ async function connectWallet(): Promise<void> {
   }
 }
 
-async function switchToSepolia(): Promise<void> {
+async function switchToAnvil(): Promise<void> {
   try {
-    await window.ethereum.request({
+    await window.ethereum!.request({
       method: "wallet_switchEthereumChain",
-      params: [{ chainId: "0xaa36a7" }],
+      params: [{ chainId: "0x7a69" }],
     });
   } catch (error: any) {
-    // Chain not added, try to add it
     if (error.code === 4902) {
-      await window.ethereum.request({
+      await window.ethereum!.request({
         method: "wallet_addEthereumChain",
         params: [
           {
-            chainId: "0xaa36a7",
-            chainName: "Sepolia",
+            chainId: "0x7a69",
+            chainName: "Anvil (Local)",
             nativeCurrency: { name: "ETH", symbol: "ETH", decimals: 18 },
-            rpcUrls: ["https://rpc.sepolia.org"],
-            blockExplorerUrls: ["https://sepolia.etherscan.io"],
+            rpcUrls: ["http://127.0.0.1:8545"],
           },
         ],
       });
     }
+  }
+}
+
+async function showBalances(): Promise<void> {
+  if (!publicClient || !connectedAddress) return;
+
+  const balanceEl = document.getElementById("balanceInfo");
+  if (!balanceEl) return;
+
+  try {
+    const ethBalance = await publicClient.getBalance({ address: connectedAddress });
+    const token0Balance = await publicClient.readContract({
+      address: TOKENS.TOKEN0.address,
+      abi: ERC20ABI,
+      functionName: "balanceOf",
+      args: [connectedAddress],
+    });
+    const token1Balance = await publicClient.readContract({
+      address: TOKENS.TOKEN1.address,
+      abi: ERC20ABI,
+      functionName: "balanceOf",
+      args: [connectedAddress],
+    });
+
+    balanceEl.innerHTML = `
+      <strong>Balances:</strong>
+      ${formatUnits(ethBalance, 18)} ETH |
+      ${formatUnits(token0Balance as bigint, TOKENS.TOKEN0.decimals)} ${TOKENS.TOKEN0.symbol} |
+      ${formatUnits(token1Balance as bigint, TOKENS.TOKEN1.decimals)} ${TOKENS.TOKEN1.symbol}
+    `;
+    balanceEl.style.display = "block";
+  } catch (error) {
+    console.error("Failed to fetch balances:", error);
   }
 }
 
@@ -148,7 +186,7 @@ function updateConnectionUI(connected: boolean): void {
     connectBtn.textContent = `${connectedAddress.slice(0, 6)}...${connectedAddress.slice(-4)}`;
     connectBtn.classList.add("connected");
     networkDot.classList.add("connected");
-    networkName.textContent = "Sepolia";
+    networkName.textContent = "Anvil (Local)";
     createBtn.disabled = false;
   } else {
     connectBtn.textContent = "Connect Wallet";
@@ -168,13 +206,14 @@ async function checkApiHealth(): Promise<void> {
     const response = await fetch(`${API_BASE_URL}/health`);
     if (response.ok) {
       const data = await response.json();
-      apiStatus.textContent = `Healthy (v${data.version})`;
+      const contractStatus = data.contracts?.hookDeployed ? "Contracts OK" : "No contracts";
+      apiStatus.textContent = `Healthy (v${data.version}) - ${contractStatus}`;
       apiStatus.style.color = "#3fb950";
     } else {
       throw new Error("API unhealthy");
     }
   } catch {
-    apiStatus.textContent = "Offline";
+    apiStatus.textContent = "Offline - start API with: cd api && npm run dev";
     apiStatus.style.color = "#f85149";
   }
 }
@@ -198,42 +237,31 @@ async function getEstimate(): Promise<void> {
     const response = await fetch(`${API_BASE_URL}/api/v1/estimate`, {
       method: "POST",
       headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({
-        tokenSell,
-        tokenBuy,
-        amount,
-        timeframeDays,
-        network,
-      }),
+      body: JSON.stringify({ tokenSell, tokenBuy, amount, timeframeDays, network }),
     });
 
     const data = await response.json();
+    if (!response.ok) throw new Error(data.error || "Estimate failed");
 
-    if (!response.ok) {
-      throw new Error(data.error || "Estimate failed");
-    }
+    const sellToken = getTokenInfo(tokenSell);
+    const buyToken = getTokenInfo(tokenBuy);
 
     showResult(
       createResult,
       `Estimate Results:
 ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 
-Tick Range:
-  Lower: ${data.tickRange.tickLower}
-  Upper: ${data.tickRange.tickUpper}
+Selling: ${formatUnits(BigInt(amount), sellToken.decimals)} ${sellToken.symbol}
+For: ${buyToken.symbol}
 
+Tick Range: [${data.tickRange.tickLower}, ${data.tickRange.tickUpper}]
 Fill Probability: ${(data.estimatedFillProbability * 100).toFixed(1)}%
-Average Price: ${data.estimatedAveragePrice}
+
+Pool: tick=${data.poolInfo.currentTick}, fee=${data.poolInfo.fee / 10000}%
 
 Costs:
   Service Fee: $${data.costs.serviceFee}
-  Est. Gas: ${data.costs.estimatedGas} wei
-  Total: ${data.costs.total}
-
-Pool Info:
-  Current Tick: ${data.poolInfo.currentTick}
-  Fee Tier: ${data.poolInfo.fee / 10000}%
-  Liquidity: ${data.poolInfo.liquidity}`,
+  Est. Gas: ${formatUnits(BigInt(data.costs.estimatedGas), 18)} ETH`,
       false
     );
   } catch (error: any) {
@@ -267,44 +295,17 @@ async function createOrder(event: Event): Promise<void> {
   createBtn.textContent = "Creating Order...";
 
   try {
-    // First, make request without payment to get 402 response
+    // First request (no payment) triggers 402
     const initialResponse = await fetch(`${API_BASE_URL}/api/v1/exit`, {
       method: "POST",
       headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({
-        tokenSell,
-        tokenBuy,
-        amount,
-        timeframeDays,
-        network,
-      }),
+      body: JSON.stringify({ tokenSell, tokenBuy, amount, timeframeDays, network }),
     });
 
     if (initialResponse.status === 402) {
-      // Get payment requirements
       const paymentReq = await initialResponse.json();
-      console.log("Payment required:", paymentReq);
 
-      // In a real implementation, we would:
-      // 1. Sign the payment with the wallet
-      // 2. Send the signed payment in X-Payment header
-      // For now, simulate with dev mode
-
-      showResult(
-        createResult,
-        `Payment Required (x402)
-━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
-
-Amount: $${parseInt(paymentReq.accepts[0].maxAmountRequired) / 1e6} USDC
-Network: ${paymentReq.accepts[0].network}
-Pay To: ${paymentReq.accepts[0].payTo}
-
-In production, your wallet would sign a USDC transfer.
-For testing, set SKIP_PAYMENT=true in API .env`,
-        false
-      );
-
-      // If SKIP_PAYMENT is enabled on server, try again with mock payment
+      // Build mock payment for dev mode (SKIP_PAYMENT=true)
       const mockPayment = btoa(
         JSON.stringify({
           x402Version: 1,
@@ -324,53 +325,53 @@ For testing, set SKIP_PAYMENT=true in API .env`,
         })
       );
 
+      createBtn.textContent = "Sending to chain...";
+
       const paidResponse = await fetch(`${API_BASE_URL}/api/v1/exit`, {
         method: "POST",
         headers: {
           "Content-Type": "application/json",
           "X-Payment": mockPayment,
         },
-        body: JSON.stringify({
-          tokenSell,
-          tokenBuy,
-          amount,
-          timeframeDays,
-          network,
-        }),
+        body: JSON.stringify({ tokenSell, tokenBuy, amount, timeframeDays, network }),
       });
 
       if (paidResponse.ok) {
         const order = await paidResponse.json();
+        const sellToken = getTokenInfo(tokenSell);
+
         showResult(
           createResult,
-          `Order Created Successfully!
+          `Order Created On-Chain!
 ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 
 Order ID: ${order.orderId}
-Status: ${order.status}
+Status: ${order.status.toUpperCase()}
+Liquidity: ${order.position.liquidity}
 
-Position:
-  Tick Lower: ${order.position.tickLower}
-  Tick Upper: ${order.position.tickUpper}
-  Fill Probability: ${(order.position.estimatedFillProbability * 100).toFixed(1)}%
+Position: [${order.position.tickLower}, ${order.position.tickUpper}]
+Fill Prob: ${(order.position.estimatedFillProbability * 100).toFixed(1)}%
 
+Amount: ${formatUnits(BigInt(amount), sellToken.decimals)} ${sellToken.symbol}
 Expires: ${new Date(order.expiresAt).toLocaleString()}
-Tx Hash: ${order.txHash || "pending"}`,
+Tx: ${order.txHash}`,
           false
         );
 
-        // Add to local orders
         localOrders.unshift({
           orderId: order.orderId,
           status: order.status,
           fillPercent: 0,
           createdAt: new Date().toISOString(),
           deadline: order.expiresAt,
+          txHash: order.txHash,
         });
         renderOrders();
+      } else {
+        const err = await paidResponse.json();
+        throw new Error(err.error || err.message || "Order creation failed");
       }
     } else if (initialResponse.ok) {
-      // Direct success (shouldn't happen in production)
       const order = await initialResponse.json();
       showResult(createResult, JSON.stringify(order, null, 2), false);
     } else {
@@ -381,13 +382,12 @@ Tx Hash: ${order.txHash || "pending"}`,
     showResult(createResult, `Error: ${error.message}`, true);
   } finally {
     createBtn.disabled = false;
-    createBtn.textContent = "Create Order (Pay $1)";
+    createBtn.textContent = "Create Exit Order ($1)";
   }
 }
 
 async function checkOrderStatus(): Promise<void> {
   const orderId = orderIdInput.value.trim();
-
   if (!orderId) {
     showResult(statusResult, "Please enter an order ID", true);
     return;
@@ -399,10 +399,7 @@ async function checkOrderStatus(): Promise<void> {
   try {
     const response = await fetch(`${API_BASE_URL}/api/v1/status/${orderId}`);
     const data = await response.json();
-
-    if (!response.ok) {
-      throw new Error(data.error || "Failed to get status");
-    }
+    if (!response.ok) throw new Error(data.error || "Failed to get status");
 
     showResult(
       statusResult,
@@ -413,10 +410,14 @@ Order ID: ${data.orderId}
 Status: ${data.status.toUpperCase()}
 Fill: ${data.fillPercent}%
 
+Token0 in position: ${data.currentToken0}
+Token1 in position: ${data.currentToken1}
+
 Created: ${new Date(data.createdAt).toLocaleString()}
 Deadline: ${new Date(data.deadline).toLocaleString()}
 ${data.closedAt ? `Closed: ${new Date(data.closedAt).toLocaleString()}` : ""}
-${data.closeReason ? `Reason: ${data.closeReason}` : ""}`,
+${data.closeReason ? `Reason: ${data.closeReason}` : ""}
+Tx: ${data.txHash || "n/a"}`,
       false
     );
   } catch (error: any) {
@@ -424,6 +425,29 @@ ${data.closeReason ? `Reason: ${data.closeReason}` : ""}`,
   } finally {
     checkStatusBtn.disabled = false;
     checkStatusBtn.textContent = "Check";
+  }
+}
+
+async function cancelOrder(orderId: string): Promise<void> {
+  try {
+    const response = await fetch(`${API_BASE_URL}/api/v1/cancel/${orderId}`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ signature: "0x00" }),
+    });
+
+    const data = await response.json();
+    if (!data.success) throw new Error(data.message);
+
+    // Update local order
+    const order = localOrders.find((o) => o.orderId === orderId);
+    if (order) {
+      order.status = "cancelled";
+    }
+    renderOrders();
+    showResult(statusResult, `Order cancelled! Tx: ${data.txHash}`, false);
+  } catch (error: any) {
+    showResult(statusResult, `Cancel failed: ${error.message}`, true);
   }
 }
 
@@ -438,7 +462,7 @@ async function loadOrders(): Promise<void> {
       localOrders.push(...data.orders);
     }
   } catch {
-    // API might be offline, use local orders
+    // API might be offline
   }
 
   renderOrders();
@@ -447,6 +471,16 @@ async function loadOrders(): Promise<void> {
 // ═══════════════════════════════════════════════════════════════════════════
 // UI HELPERS
 // ═══════════════════════════════════════════════════════════════════════════
+
+function getTokenInfo(address: string): { symbol: string; decimals: number } {
+  if (address.toLowerCase() === TOKENS.TOKEN0.address.toLowerCase()) {
+    return { symbol: TOKENS.TOKEN0.symbol, decimals: TOKENS.TOKEN0.decimals };
+  }
+  if (address.toLowerCase() === TOKENS.TOKEN1.address.toLowerCase()) {
+    return { symbol: TOKENS.TOKEN1.symbol, decimals: TOKENS.TOKEN1.decimals };
+  }
+  return { symbol: "TOKEN", decimals: 18 };
+}
 
 function showResult(element: HTMLDivElement, message: string, isError: boolean): void {
   element.style.display = "block";
@@ -457,7 +491,7 @@ function showResult(element: HTMLDivElement, message: string, isError: boolean):
 
 function renderOrders(): void {
   if (localOrders.length === 0) {
-    ordersList.innerHTML = `<div class="empty-state">No orders yet</div>`;
+    ordersList.innerHTML = `<div class="empty-state">No orders yet. Create one above!</div>`;
     return;
   }
 
@@ -472,18 +506,27 @@ function renderOrders(): void {
       <div class="order-details">
         <span>Fill: ${order.fillPercent}%</span>
         <span>Expires: ${new Date(order.deadline).toLocaleDateString()}</span>
+        ${order.txHash ? `<span class="tx-link">Tx: ${order.txHash.slice(0, 10)}...</span>` : ""}
       </div>
       <div class="progress-bar">
         <div class="progress-fill" style="width: ${order.fillPercent}%"></div>
       </div>
+      ${
+        order.status === "active"
+          ? `<button class="cancel-btn" onclick="window.__cancelOrder('${order.orderId}')">Cancel</button>`
+          : ""
+      }
     </div>
   `
     )
     .join("");
 }
 
+// Expose cancel handler globally for inline onclick
+(window as any).__cancelOrder = cancelOrder;
+
 // ═══════════════════════════════════════════════════════════════════════════
-// EVENT LISTENERS
+// EVENT LISTENERS & INIT
 // ═══════════════════════════════════════════════════════════════════════════
 
 connectBtn.addEventListener("click", connectWallet);
@@ -491,15 +534,23 @@ estimateBtn.addEventListener("click", getEstimate);
 createOrderForm.addEventListener("submit", createOrder);
 checkStatusBtn.addEventListener("click", checkOrderStatus);
 
-// Pre-fill with test tokens for convenience
-tokenSellInput.value = TEST_TOKENS.WETH;
-tokenBuyInput.value = TEST_TOKENS.USDC;
-amountInput.value = "1000000000000000000"; // 1 token
+// Pre-fill with deployed Anvil tokens
+tokenSellInput.value = TOKENS.TOKEN0.address;
+tokenBuyInput.value = TOKENS.TOKEN1.address;
+amountInput.value = "1000000000000000000"; // 1 token (18 decimals)
 
 // Check API health on load
 checkApiHealth();
 
-// Listen for account changes
+// Auto-refresh orders every 10 seconds
+setInterval(async () => {
+  if (connectedAddress) {
+    await loadOrders();
+    await showBalances();
+  }
+}, 10000);
+
+// Listen for account/chain changes
 if (window.ethereum) {
   window.ethereum.on("accountsChanged", (accounts: Address[]) => {
     if (accounts.length === 0) {
@@ -509,6 +560,7 @@ if (window.ethereum) {
     } else {
       connectedAddress = accounts[0];
       updateConnectionUI(true);
+      showBalances();
       loadOrders();
     }
   });
