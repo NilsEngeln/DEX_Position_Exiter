@@ -45,8 +45,10 @@ contract PositionExiterHookTest is Test {
     }
 
     function test_MockTokenDeployment() public {
-        assertEq(token0.name(), address(token0) < address(token1) ? "Token0" : "Token1");
+        // After setUp, token0 always has the lower address
+        assertTrue(address(token0) < address(token1));
         assertEq(token0.decimals(), 18);
+        assertEq(token1.decimals(), 18);
     }
 
     function test_MockTokenMinting() public {

@@ -8,6 +8,7 @@ import {PoolKey} from "@uniswap/v4-core/src/types/PoolKey.sol";
 import {PoolId, PoolIdLibrary} from "@uniswap/v4-core/src/types/PoolId.sol";
 import {BalanceDelta, toBalanceDelta} from "@uniswap/v4-core/src/types/BalanceDelta.sol";
 import {BeforeSwapDelta, BeforeSwapDeltaLibrary} from "@uniswap/v4-core/src/types/BeforeSwapDelta.sol";
+import {SwapParams, ModifyLiquidityParams} from "@uniswap/v4-core/src/types/PoolOperation.sol";
 import {Currency, CurrencyLibrary} from "@uniswap/v4-core/src/types/Currency.sol";
 import {StateLibrary} from "@uniswap/v4-core/src/libraries/StateLibrary.sol";
 import {TransientStateLibrary} from "@uniswap/v4-core/src/libraries/TransientStateLibrary.sol";
@@ -135,26 +136,25 @@ contract PositionExiterHook is BaseHook, IPositionExiterHook, IUnlockCallback, R
 
     /// @notice Called after pool initialization
     /// @dev Records the initial tick for the pool
-    function afterInitialize(
+    function _afterInitialize(
         address,
         PoolKey calldata key,
         uint160,
-        int24 tick,
-        bytes calldata
-    ) external override onlyPoolManager returns (bytes4) {
+        int24 tick
+    ) internal override returns (bytes4) {
         lastTicks[key.toId()] = tick;
-        return this.afterInitialize.selector;
+        return BaseHook.afterInitialize.selector;
     }
 
     /// @notice Called after every swap - monitors for filled positions
     /// @dev This is the core of the hook - detects tick crossings and closes filled orders
-    function afterSwap(
+    function _afterSwap(
         address,
         PoolKey calldata key,
-        IPoolManager.SwapParams calldata,
+        SwapParams calldata,
         BalanceDelta,
         bytes calldata
-    ) external override onlyPoolManager returns (bytes4, int128) {
+    ) internal override returns (bytes4, int128) {
         PoolId poolId = key.toId();
 
         // Get current tick
@@ -171,7 +171,7 @@ contract PositionExiterHook is BaseHook, IPositionExiterHook, IUnlockCallback, R
             _processTickCrossing(poolId, previousTick, currentTick, key);
         }
 
-        return (this.afterSwap.selector, 0);
+        return (BaseHook.afterSwap.selector, 0);
     }
 
     // ═══════════════════════════════════════════════════════════════════════════
@@ -482,7 +482,7 @@ contract PositionExiterHook is BaseHook, IPositionExiterHook, IUnlockCallback, R
         // Modify position (add liquidity)
         (BalanceDelta delta,) = poolManager.modifyLiquidity(
             callbackData.poolKey,
-            IPoolManager.ModifyLiquidityParams({
+            ModifyLiquidityParams({
                 tickLower: callbackData.tickLower,
                 tickUpper: callbackData.tickUpper,
                 liquidityDelta: int256(uint256(liquidity)),
@@ -520,7 +520,7 @@ contract PositionExiterHook is BaseHook, IPositionExiterHook, IUnlockCallback, R
         // Remove liquidity (negative liquidityDelta)
         (BalanceDelta delta,) = poolManager.modifyLiquidity(
             callbackData.poolKey,
-            IPoolManager.ModifyLiquidityParams({
+            ModifyLiquidityParams({
                 tickLower: callbackData.tickLower,
                 tickUpper: callbackData.tickUpper,
                 liquidityDelta: -int256(uint256(callbackData.liquidity)),
