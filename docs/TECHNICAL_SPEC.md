@@ -187,7 +187,7 @@ interface IPositionExiterHook {
 }
 ```
 
-### 2. TokenAllowanceGuard.sol
+### 2. TokenAllowanceGuard.sol (Planned — Not Yet Implemented)
 
 Scoped approval system for enhanced security.
 
@@ -286,7 +286,7 @@ interface ITokenAllowanceGuard {
 }
 ```
 
-### 3. GasEscrow.sol
+### 3. GasEscrow.sol (Planned — Not Yet Implemented)
 
 Manages prepaid gas for position closing.
 

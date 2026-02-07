@@ -11,7 +11,7 @@ All phases through Phase 4 are implemented. The full stack is wired end-to-end:
 
 | Layer | Status | What Works |
 |-------|--------|-----------|
-| **Smart Contracts** | DEPLOYED | 748-line hook, 32 integration tests, deployed to Anvil via CREATE2 |
+| **Smart Contracts** | DEPLOYED | 747-line hook, 32 integration tests, deployed to Anvil via CREATE2 |
 | **API Server** | WIRED | Express + real contract calls via viem + x402 dev mode |
 | **Frontend** | UPDATED | Anvil chain, token balances, cancel buttons, auto-refresh |
 

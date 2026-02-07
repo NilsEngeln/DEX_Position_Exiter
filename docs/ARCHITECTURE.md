@@ -232,7 +232,7 @@ interface IPositionExiterHook {
 }
 ```
 
-#### TokenAllowanceGuard.sol
+#### TokenAllowanceGuard.sol (Planned — Not Yet Implemented)
 
 Ensures users only approve exactly what's needed for each order.
 
