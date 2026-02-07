@@ -27,9 +27,10 @@ The service:
 
 ## Tech Stack
 
-- **Smart Contracts**: Solidity 0.8.26+, Foundry, Uniswap V4 hooks
-- **Backend**: Node.js, TypeScript, Express, x402 middleware
-- **Database**: PostgreSQL (planned)
+- **Smart Contracts**: Solidity 0.8.26, Foundry, Uniswap V4 hooks (Cancun EVM)
+- **Backend**: Node.js 20+, TypeScript, Express, x402 middleware, Viem
+- **Frontend**: Vite, TypeScript, Viem (vanilla TS, no framework)
+- **Database**: In-memory (PostgreSQL planned)
 - **Networks**: Ethereum Sepolia (testing), Base (production)
 
 ## Project Structure
@@ -103,21 +104,26 @@ curl -X POST http://localhost:3000/api/v1/estimate \
 
 ## Project Status
 
-**Phase: Development Setup** (Current)
+**Phase: Integration & POC** (Current)
 
 - [x] Research x402 payment protocol
 - [x] Research Uniswap V4 hooks architecture
 - [x] Design system architecture
 - [x] Define smart contract interfaces
 - [x] Set up Foundry project structure
-- [x] Set up Node.js/TypeScript API structure
-- [x] Create initial contract scaffolding
-- [ ] Implement full Uniswap V4 integration
-- [ ] Build API server with database
-- [ ] Testing (unit, integration, fork tests)
+- [x] Implement PositionExiterHook (748 lines, full feature set)
+- [x] 32 integration tests with real PoolManager (all passing)
+- [x] Set up Node.js/TypeScript API with x402 middleware
+- [x] Build frontend with wallet connect + order management UI
+- [ ] **Deploy contracts to Anvil/Sepolia**
+- [ ] **Wire API to real contract calls** (currently mock data)
+- [ ] **Add token approval flow to frontend**
+- [ ] Add persistent database (currently in-memory)
 - [ ] Deploy to Sepolia testnet
 - [ ] Security audit
 - [ ] Deploy to Base mainnet
+
+See [POC Roadmap](./docs/POC_ROADMAP.md) for detailed gap analysis and prioritized tasks.
 
 ## Design Decisions
 

@@ -1,9 +1,6 @@
-import { createPublicClient, createWalletClient, http } from "viem";
-import { privateKeyToAccount } from "viem/accounts";
-import { sepolia } from "viem/chains";
+import { type Address, decodeEventLog } from "viem";
 
 import {
-  CreateOrderRequest,
   CreateOrderResponse,
   OrderStatusResponse,
   TickRange,
@@ -11,10 +8,21 @@ import {
   SERVICE_FEE_DISPLAY,
 } from "../types/index.js";
 import { logger } from "../utils/logger.js";
+import {
+  getHookContract,
+  getDeployedPoolKey,
+  getPublicClient,
+  getWalletClient,
+  getDeployerAddress,
+  ensureTokenApprovals,
+} from "./contractClient.js";
+import { PositionExiterHookABI } from "../abi/PositionExiterHook.js";
+import { ADDRESSES } from "../abi/addresses.js";
 
-// In-memory order storage (replace with database in production)
+// In-memory order storage (maps API orderId to on-chain bytes32 orderId)
 interface StoredOrder {
-  orderId: string;
+  orderId: string; // API-facing orderId
+  onChainOrderId: `0x${string}`; // bytes32 from contract
   owner: string;
   tokenSell: string;
   tokenBuy: string;
@@ -33,16 +41,15 @@ interface StoredOrder {
 }
 
 /**
- * Service for managing exit orders
- *
- * Handles order creation, status tracking, and lifecycle management.
+ * Service for managing exit orders via on-chain contract calls
  */
 export class OrderService {
   private orders: Map<string, StoredOrder> = new Map();
   private orderCounter = 0;
+  private approvalsEnsured = false;
 
   /**
-   * Create a new exit order
+   * Create a new exit order on-chain
    */
   async createOrder(params: {
     tokenSell: string;
@@ -54,65 +61,143 @@ export class OrderService {
     tickRange: TickRange;
     owner: string;
   }): Promise<CreateOrderResponse> {
-    const orderId = this.generateOrderId();
-    const deadline = new Date(Date.now() + params.timeframeDays * 24 * 60 * 60 * 1000);
+    const localOrderId = this.generateOrderId();
+    const deadlineTimestamp = Math.floor(Date.now() / 1000) + params.timeframeDays * 24 * 60 * 60;
+    const deadlineDate = new Date(deadlineTimestamp * 1000);
 
-    logger.info("Creating order", { orderId, ...params });
+    logger.info("Creating order on-chain", { localOrderId, ...params });
 
-    // Store order
+    // Store initial order state
     const order: StoredOrder = {
-      orderId,
+      orderId: localOrderId,
+      onChainOrderId: "0x" + "0".repeat(64) as `0x${string}`,
       owner: params.owner,
       tokenSell: params.tokenSell,
       tokenBuy: params.tokenBuy,
       amount: params.amount,
       tickLower: params.tickRange.tickLower,
       tickUpper: params.tickRange.tickUpper,
-      liquidity: "0", // Will be set after on-chain creation
+      liquidity: "0",
       status: "pending",
       fillPercent: 0,
       createdAt: new Date(),
-      deadline,
+      deadline: deadlineDate,
       network: params.network,
     };
 
-    this.orders.set(orderId, order);
+    this.orders.set(localOrderId, order);
 
-    // TODO: Create on-chain position
-    // This would:
-    // 1. Call the PositionExiterHook.createOrder() function
-    // 2. Wait for transaction confirmation
-    // 3. Update order with txHash and liquidity amount
+    try {
+      // Ensure token approvals before first order
+      if (!this.approvalsEnsured) {
+        await ensureTokenApprovals();
+        this.approvalsEnsured = true;
+      }
 
-    // For now, simulate successful creation
-    order.status = "active";
-    order.txHash = `0x${"0".repeat(64)}`;
-    order.liquidity = params.amount;
+      const wallet = getWalletClient();
+      const publicClient = getPublicClient();
+      const deployer = getDeployerAddress();
+      const recipient = (params.recipient || params.owner || deployer) as Address;
 
-    const gasEstimate = await this.estimateGasCost(params.network);
+      // Determine order direction based on token addresses
+      const isSellToken0 = params.tokenSell.toLowerCase() < params.tokenBuy.toLowerCase();
+      const direction = isSellToken0 ? 0 : 1; // 0 = SellToken0ForToken1, 1 = SellToken1ForToken0
 
-    return {
-      orderId,
-      status: "active",
-      position: {
+      const poolKey = getDeployedPoolKey();
+
+      // Build CreateOrderParams struct
+      const createOrderParams = {
+        poolKey,
         tickLower: params.tickRange.tickLower,
         tickUpper: params.tickRange.tickUpper,
-        liquidity: order.liquidity,
-        estimatedFillPrice: params.tickRange.estimatedAveragePrice.toString(),
-        estimatedFillProbability: params.tickRange.estimatedFillProbability,
-      },
-      costs: {
-        serviceFee: SERVICE_FEE_DISPLAY,
-        estimatedGas: gasEstimate.toString(),
-        total: (BigInt(SERVICE_FEE_DISPLAY.replace(".", "")) + gasEstimate).toString(),
-      },
-      expiresAt: deadline.toISOString(),
-      txHash: order.txHash,
-    };
+        amountIn: BigInt(params.amount),
+        direction,
+        deadline: BigInt(deadlineTimestamp),
+        recipient,
+      };
+
+      logger.info("Sending createOrder tx", {
+        tickLower: createOrderParams.tickLower,
+        tickUpper: createOrderParams.tickUpper,
+        amountIn: createOrderParams.amountIn.toString(),
+        direction,
+        deadline: deadlineTimestamp,
+      });
+
+      // Send the transaction
+      const txHash = await wallet.writeContract({
+        address: ADDRESSES.hook as Address,
+        abi: PositionExiterHookABI,
+        functionName: "createOrder",
+        args: [createOrderParams],
+        account: wallet.account!,
+        chain: wallet.chain,
+      });
+
+      logger.info("createOrder tx sent", { txHash });
+
+      // Wait for receipt
+      const receipt = await publicClient.waitForTransactionReceipt({ hash: txHash });
+      logger.info("createOrder tx confirmed", { status: receipt.status, blockNumber: receipt.blockNumber });
+
+      // Extract OrderCreated event to get the on-chain orderId
+      let onChainOrderId: `0x${string}` = "0x" + "0".repeat(64) as `0x${string}`;
+      let liquidity = "0";
+
+      for (const log of receipt.logs) {
+        try {
+          const decoded = decodeEventLog({
+            abi: PositionExiterHookABI,
+            data: log.data,
+            topics: log.topics,
+          });
+
+          if (decoded.eventName === "OrderCreated") {
+            const args = decoded.args as { orderId: `0x${string}`; liquidity: bigint };
+            onChainOrderId = args.orderId;
+            liquidity = args.liquidity.toString();
+            logger.info("OrderCreated event", { onChainOrderId, liquidity });
+          }
+        } catch {
+          // Not our event, skip
+        }
+      }
+
+      // Update stored order
+      order.onChainOrderId = onChainOrderId;
+      order.status = "active";
+      order.txHash = txHash;
+      order.liquidity = liquidity;
+
+      const gasEstimate = await this.estimateGasCost(params.network);
+
+      return {
+        orderId: localOrderId,
+        status: "active",
+        position: {
+          tickLower: params.tickRange.tickLower,
+          tickUpper: params.tickRange.tickUpper,
+          liquidity: order.liquidity,
+          estimatedFillPrice: params.tickRange.estimatedAveragePrice.toString(),
+          estimatedFillProbability: params.tickRange.estimatedFillProbability,
+        },
+        costs: {
+          serviceFee: SERVICE_FEE_DISPLAY,
+          estimatedGas: gasEstimate.toString(),
+          total: (BigInt(SERVICE_FEE_DISPLAY.replace(".", "")) + gasEstimate).toString(),
+        },
+        expiresAt: deadlineDate.toISOString(),
+        txHash,
+      };
+    } catch (error: any) {
+      logger.error("Failed to create order on-chain", { error: error.message || error });
+      order.status = "failed";
+      throw new Error(`On-chain order creation failed: ${error.shortMessage || error.message}`);
+    }
   }
 
   /**
-   * Get order status
+   * Get order status - reads from on-chain if possible
    */
   async getOrderStatus(orderId: string): Promise<OrderStatusResponse | null> {
     const order = this.orders.get(orderId);
@@ -121,15 +206,40 @@ export class OrderService {
       return null;
     }
 
-    // TODO: Fetch current fill status from on-chain
-    // This would call getOrderFillStatus() on the hook contract
+    // Try to get fill status from chain
+    if (order.onChainOrderId !== "0x" + "0".repeat(64) && order.status === "active") {
+      try {
+        const hook = getHookContract();
+        const [fillPercent, currentToken0, currentToken1] = await hook.read.getOrderFillStatus([
+          order.onChainOrderId,
+        ]);
 
+        order.fillPercent = Number(fillPercent);
+
+        return {
+          orderId: order.orderId,
+          status: order.status,
+          fillPercent: Number(fillPercent),
+          currentToken0: currentToken0.toString(),
+          currentToken1: currentToken1.toString(),
+          createdAt: order.createdAt.toISOString(),
+          deadline: order.deadline.toISOString(),
+          closedAt: order.closedAt?.toISOString(),
+          closeReason: order.closeReason,
+          txHash: order.txHash,
+        };
+      } catch (error) {
+        logger.warn("Failed to read fill status from chain", { orderId, error });
+      }
+    }
+
+    // Fallback to stored data
     return {
       orderId: order.orderId,
       status: order.status,
       fillPercent: order.fillPercent,
-      currentToken0: "0", // TODO: From on-chain
-      currentToken1: "0", // TODO: From on-chain
+      currentToken0: "0",
+      currentToken1: "0",
       createdAt: order.createdAt.toISOString(),
       deadline: order.deadline.toISOString(),
       closedAt: order.closedAt?.toISOString(),
@@ -139,7 +249,7 @@ export class OrderService {
   }
 
   /**
-   * Cancel an order
+   * Cancel an order on-chain
    */
   async cancelOrder(
     orderId: string,
@@ -155,24 +265,40 @@ export class OrderService {
       return { success: false, message: `Order is ${order.status}, cannot cancel` };
     }
 
-    // TODO: Call cancelOrder() on-chain
-    // This would:
-    // 1. Verify signature matches order owner
-    // 2. Call PositionExiterHook.cancelOrder()
-    // 3. Wait for confirmation
+    try {
+      const wallet = getWalletClient();
+      const publicClient = getPublicClient();
 
-    // For now, simulate successful cancellation
-    order.status = "cancelled";
-    order.closedAt = new Date();
-    order.closeReason = "User cancelled";
+      const txHash = await wallet.writeContract({
+        address: ADDRESSES.hook as Address,
+        abi: PositionExiterHookABI,
+        functionName: "cancelOrder",
+        args: [order.onChainOrderId],
+        account: wallet.account!,
+        chain: wallet.chain,
+      });
 
-    logger.info("Order cancelled", { orderId });
+      logger.info("cancelOrder tx sent", { txHash, orderId });
 
-    return {
-      success: true,
-      message: "Order cancelled successfully",
-      txHash: `0x${"0".repeat(64)}`,
-    };
+      const receipt = await publicClient.waitForTransactionReceipt({ hash: txHash });
+      logger.info("cancelOrder tx confirmed", { status: receipt.status });
+
+      order.status = "cancelled";
+      order.closedAt = new Date();
+      order.closeReason = "User cancelled";
+
+      return {
+        success: true,
+        message: "Order cancelled on-chain successfully",
+        txHash,
+      };
+    } catch (error: any) {
+      logger.error("Failed to cancel order on-chain", { error: error.message || error });
+      return {
+        success: false,
+        message: `Cancel failed: ${error.shortMessage || error.message}`,
+      };
+    }
   }
 
   /**
@@ -208,23 +334,8 @@ export class OrderService {
   /**
    * Estimate gas cost for order creation and closing
    */
-  async estimateGasCost(network: SupportedNetwork): Promise<bigint> {
-    // TODO: Implement actual gas estimation
-    // This would:
-    // 1. Estimate gas for createOrder()
-    // 2. Estimate gas for closePosition()
-    // 3. Get current gas price
-    // 4. Add buffer for price fluctuation
-
-    // Placeholder: ~500k gas at 30 gwei = 0.015 ETH
-    // For Sepolia/Base, gas is much cheaper
-
-    if (network === "sepolia") {
-      return BigInt("15000000000000000"); // 0.015 ETH
-    }
-
-    // Base has lower gas costs
-    return BigInt("1000000000000000"); // 0.001 ETH
+  async estimateGasCost(_network: SupportedNetwork): Promise<bigint> {
+    return BigInt("15000000000000000"); // ~0.015 ETH estimate
   }
 
   /**
@@ -239,22 +350,39 @@ export class OrderService {
   }
 
   /**
-   * Process expired orders (called by background job)
+   * Process expired orders
    */
   async processExpiredOrders(): Promise<void> {
     const now = new Date();
+    const wallet = getWalletClient();
+    const publicClient = getPublicClient();
 
     for (const order of this.orders.values()) {
       if (order.status !== "active") continue;
       if (order.deadline > now) continue;
+      if (order.onChainOrderId === "0x" + "0".repeat(64)) continue;
 
       logger.info("Processing expired order", { orderId: order.orderId });
 
-      // TODO: Call closeExpiredOrder() on-chain
+      try {
+        const txHash = await wallet.writeContract({
+          address: ADDRESSES.hook as Address,
+          abi: PositionExiterHookABI,
+          functionName: "closeExpiredOrder",
+          args: [order.onChainOrderId],
+          account: wallet.account!,
+          chain: wallet.chain,
+        });
 
-      order.status = "expired";
-      order.closedAt = now;
-      order.closeReason = "Deadline reached";
+        await publicClient.waitForTransactionReceipt({ hash: txHash });
+
+        order.status = "expired";
+        order.closedAt = now;
+        order.closeReason = "Deadline reached";
+        logger.info("Expired order closed on-chain", { orderId: order.orderId, txHash });
+      } catch (error: any) {
+        logger.error("Failed to close expired order", { orderId: order.orderId, error: error.message });
+      }
     }
   }
 }

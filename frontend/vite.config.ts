@@ -2,6 +2,7 @@ import { defineConfig } from "vite";
 
 export default defineConfig({
   server: {
+    host: true, // bind to 0.0.0.0 so it's accessible from your Mac
     port: 5173,
     proxy: {
       "/api": {

@@ -4,7 +4,7 @@ import { z } from "zod";
 // NETWORK TYPES
 // ═══════════════════════════════════════════════════════════════════════════
 
-export const SupportedNetwork = z.enum(["sepolia", "base"]);
+export const SupportedNetwork = z.enum(["sepolia", "base", "anvil"]);
 export type SupportedNetwork = z.infer<typeof SupportedNetwork>;
 
 export const NetworkConfig = z.object({

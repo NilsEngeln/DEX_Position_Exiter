@@ -17,6 +17,7 @@ remappings = [
     "@uniswap/v4-periphery/=lib/v4-periphery/",
     "@openzeppelin/contracts/=lib/openzeppelin-contracts/contracts/",
     "forge-std/=lib/forge-std/src/",
+    "solmate/=lib/v4-core/lib/solmate/",
 ]
 
 [profile.default.fuzz]

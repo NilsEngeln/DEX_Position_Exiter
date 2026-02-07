@@ -303,6 +303,39 @@
       font-size: 0.8125rem;
       color: var(--text-secondary);
     }
+
+    .balance-box {
+      background: var(--bg-tertiary);
+      border: 1px solid var(--border-color);
+      border-radius: 6px;
+      padding: 0.5rem 1rem;
+      margin-bottom: 1rem;
+      font-size: 0.8125rem;
+      color: var(--text-secondary);
+      display: none;
+    }
+
+    .cancel-btn {
+      background: var(--accent-red);
+      color: white;
+      border: none;
+      padding: 0.25rem 0.75rem;
+      border-radius: 4px;
+      cursor: pointer;
+      font-size: 0.75rem;
+      margin-top: 0.5rem;
+    }
+
+    .cancel-btn:hover {
+      opacity: 0.8;
+    }
+
+    .tx-link {
+      font-family: monospace;
+      font-size: 0.7rem;
+    }
+
+    .status-failed { background: var(--accent-red); color: white; }
   </style>
 </head>
 <body>
@@ -325,8 +358,10 @@
 
         <div class="info-box">
           Create a single-sided LP position to gradually exit your token without market impact.
-          Service fee: <strong>$1 USDC</strong>
+          Service fee: <strong>$1 USDC</strong> | Running on <strong>Sepolia Testnet</strong>
         </div>
+
+        <div class="balance-box" id="balanceInfo"></div>
 
         <form id="createOrderForm">
           <div class="form-row">
@@ -360,7 +395,7 @@
           <div class="form-group">
             <label for="network">Network</label>
             <select id="network">
-              <option value="sepolia">Ethereum Sepolia (Testnet)</option>
+              <option value="sepolia" selected>Sepolia Testnet</option>
               <option value="base" disabled>Base (Coming Soon)</option>
             </select>
           </div>
@@ -369,7 +404,7 @@
             Get Estimate
           </button>
           <button type="submit" class="submit-btn" id="createBtn" disabled>
-            Create Order (Pay $1)
+            Create Exit Order ($1)
           </button>
         </form>
 

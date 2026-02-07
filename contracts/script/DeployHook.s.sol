@@ -14,7 +14,7 @@ contract DeployHook is Script {
     // Source: https://docs.uniswap.org/contracts/v4/deployments
     address constant POOL_MANAGER_MAINNET = 0x000000000004444c5dc75cB358380D2e3dE08A90;
     address constant POOL_MANAGER_BASE = 0x498581fF718922c3f8e6A244956aF099B2652b2b;
-    address constant POOL_MANAGER_SEPOLIA = 0x8C4BcBE6b9eF47855f97E675296FA3F6fafa5F1A; // Check docs for latest
+    address constant POOL_MANAGER_SEPOLIA = 0xE03A1074c86CFeDd5C142C4F04F1a1536e203543;
 
     function run() external {
         // Get configuration from environment
