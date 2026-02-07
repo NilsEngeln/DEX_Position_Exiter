@@ -7,10 +7,10 @@ import {
   type Address,
   type WalletClient,
   type PublicClient,
-  defineChain,
 } from "viem";
+import { sepolia } from "viem/chains";
 
-import { ANVIL_ADDRESSES } from "./abi/addresses.js";
+import { ADDRESSES } from "./abi/addresses.js";
 import { ERC20ABI } from "./abi/ERC20.js";
 
 // ═══════════════════════════════════════════════════════════════════════════
@@ -18,23 +18,13 @@ import { ERC20ABI } from "./abi/ERC20.js";
 // ═══════════════════════════════════════════════════════════════════════════
 
 const API_BASE_URL = import.meta.env.VITE_API_URL || "";
+const SEPOLIA_RPC_URL = import.meta.env.VITE_SEPOLIA_RPC_URL || "https://rpc.sepolia.org";
+const SEPOLIA_CHAIN_ID = "0xaa36a7"; // 11155111
 
-// Anvil chain - use VITE_ANVIL_RPC_URL env var or default to localhost
-const ANVIL_RPC_URL = import.meta.env.VITE_ANVIL_RPC_URL || "http://127.0.0.1:8545";
-
-const anvil = defineChain({
-  id: 31337,
-  name: "Anvil",
-  nativeCurrency: { name: "Ether", symbol: "ETH", decimals: 18 },
-  rpcUrls: {
-    default: { http: [ANVIL_RPC_URL] },
-  },
-});
-
-// Deployed token info on Anvil
+// Deployed token info
 const TOKENS: Record<string, { address: Address; symbol: string; decimals: number }> = {
-  TOKEN0: { address: ANVIL_ADDRESSES.token0, symbol: "WETH", decimals: 18 },
-  TOKEN1: { address: ANVIL_ADDRESSES.token1, symbol: "USDC", decimals: 6 },
+  TOKEN0: { address: ADDRESSES.token0, symbol: "mWETH", decimals: 18 },
+  TOKEN1: { address: ADDRESSES.token1, symbol: "mUSDC", decimals: 6 },
 };
 
 // ═══════════════════════════════════════════════════════════════════════════
@@ -101,21 +91,21 @@ async function connectWallet(): Promise<void> {
 
     walletClient = createWalletClient({
       account: connectedAddress,
-      chain: anvil,
+      chain: sepolia,
       transport: custom(window.ethereum),
     });
 
     publicClient = createPublicClient({
-      chain: anvil,
-      transport: http("http://127.0.0.1:8545"),
+      chain: sepolia,
+      transport: http(SEPOLIA_RPC_URL),
     });
 
     updateConnectionUI(true);
 
-    // Switch to Anvil if needed
+    // Switch to Sepolia if needed
     const chainId = await window.ethereum.request({ method: "eth_chainId" });
-    if (chainId !== "0x7a69") {
-      await switchToAnvil();
+    if (chainId !== SEPOLIA_CHAIN_ID) {
+      await switchToSepolia();
     }
 
     // Show balances
@@ -127,11 +117,11 @@ async function connectWallet(): Promise<void> {
   }
 }
 
-async function switchToAnvil(): Promise<void> {
+async function switchToSepolia(): Promise<void> {
   try {
     await window.ethereum!.request({
       method: "wallet_switchEthereumChain",
-      params: [{ chainId: "0x7a69" }],
+      params: [{ chainId: SEPOLIA_CHAIN_ID }],
     });
   } catch (error: any) {
     if (error.code === 4902) {
@@ -139,10 +129,11 @@ async function switchToAnvil(): Promise<void> {
         method: "wallet_addEthereumChain",
         params: [
           {
-            chainId: "0x7a69",
-            chainName: "Anvil (Local)",
-            nativeCurrency: { name: "ETH", symbol: "ETH", decimals: 18 },
-            rpcUrls: ["http://127.0.0.1:8545"],
+            chainId: SEPOLIA_CHAIN_ID,
+            chainName: "Sepolia Testnet",
+            nativeCurrency: { name: "Sepolia ETH", symbol: "ETH", decimals: 18 },
+            rpcUrls: [SEPOLIA_RPC_URL],
+            blockExplorerUrls: ["https://sepolia.etherscan.io"],
           },
         ],
       });
@@ -158,25 +149,30 @@ async function showBalances(): Promise<void> {
 
   try {
     const ethBalance = await publicClient.getBalance({ address: connectedAddress });
-    const token0Balance = await publicClient.readContract({
-      address: TOKENS.TOKEN0.address,
-      abi: ERC20ABI,
-      functionName: "balanceOf",
-      args: [connectedAddress],
-    });
-    const token1Balance = await publicClient.readContract({
-      address: TOKENS.TOKEN1.address,
-      abi: ERC20ABI,
-      functionName: "balanceOf",
-      args: [connectedAddress],
-    });
 
-    balanceEl.innerHTML = `
-      <strong>Balances:</strong>
-      ${formatUnits(ethBalance, 18)} ETH |
-      ${formatUnits(token0Balance as bigint, TOKENS.TOKEN0.decimals)} ${TOKENS.TOKEN0.symbol} |
-      ${formatUnits(token1Balance as bigint, TOKENS.TOKEN1.decimals)} ${TOKENS.TOKEN1.symbol}
-    `;
+    let balanceHtml = `<strong>Balances:</strong> ${formatUnits(ethBalance, 18)} ETH`;
+
+    // Only show token balances if addresses are configured
+    if (TOKENS.TOKEN0.address) {
+      const token0Balance = await publicClient.readContract({
+        address: TOKENS.TOKEN0.address,
+        abi: ERC20ABI,
+        functionName: "balanceOf",
+        args: [connectedAddress],
+      });
+      balanceHtml += ` | ${formatUnits(token0Balance as bigint, TOKENS.TOKEN0.decimals)} ${TOKENS.TOKEN0.symbol}`;
+    }
+    if (TOKENS.TOKEN1.address) {
+      const token1Balance = await publicClient.readContract({
+        address: TOKENS.TOKEN1.address,
+        abi: ERC20ABI,
+        functionName: "balanceOf",
+        args: [connectedAddress],
+      });
+      balanceHtml += ` | ${formatUnits(token1Balance as bigint, TOKENS.TOKEN1.decimals)} ${TOKENS.TOKEN1.symbol}`;
+    }
+
+    balanceEl.innerHTML = balanceHtml;
     balanceEl.style.display = "block";
   } catch (error) {
     console.error("Failed to fetch balances:", error);
@@ -188,7 +184,7 @@ function updateConnectionUI(connected: boolean): void {
     connectBtn.textContent = `${connectedAddress.slice(0, 6)}...${connectedAddress.slice(-4)}`;
     connectBtn.classList.add("connected");
     networkDot.classList.add("connected");
-    networkName.textContent = "Anvil (Local)";
+    networkName.textContent = "Sepolia";
     createBtn.disabled = false;
   } else {
     connectBtn.textContent = "Connect Wallet";
@@ -508,7 +504,7 @@ function renderOrders(): void {
       <div class="order-details">
         <span>Fill: ${order.fillPercent}%</span>
         <span>Expires: ${new Date(order.deadline).toLocaleDateString()}</span>
-        ${order.txHash ? `<span class="tx-link">Tx: ${order.txHash.slice(0, 10)}...</span>` : ""}
+        ${order.txHash ? `<a class="tx-link" href="https://sepolia.etherscan.io/tx/${order.txHash}" target="_blank">Tx: ${order.txHash.slice(0, 10)}...</a>` : ""}
       </div>
       <div class="progress-bar">
         <div class="progress-fill" style="width: ${order.fillPercent}%"></div>
@@ -536,9 +532,9 @@ estimateBtn.addEventListener("click", getEstimate);
 createOrderForm.addEventListener("submit", createOrder);
 checkStatusBtn.addEventListener("click", checkOrderStatus);
 
-// Pre-fill with deployed Anvil tokens
-tokenSellInput.value = TOKENS.TOKEN0.address;
-tokenBuyInput.value = TOKENS.TOKEN1.address;
+// Pre-fill with deployed tokens (if configured)
+if (TOKENS.TOKEN0.address) tokenSellInput.value = TOKENS.TOKEN0.address;
+if (TOKENS.TOKEN1.address) tokenBuyInput.value = TOKENS.TOKEN1.address;
 amountInput.value = "1000000000000000000"; // 1 token (18 decimals)
 
 // Check API health on load

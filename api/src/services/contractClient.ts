@@ -7,30 +7,15 @@ import {
   keccak256,
   type PublicClient,
   type WalletClient,
-  type GetContractReturnType,
   type Address,
-  type Chain,
 } from "viem";
 import { privateKeyToAccount } from "viem/accounts";
-import { foundry } from "viem/chains";
+import { sepolia } from "viem/chains";
 
 import { PositionExiterHookABI } from "../abi/PositionExiterHook.js";
 import { ERC20ABI } from "../abi/ERC20.js";
-import { ANVIL_ADDRESSES, POOL_CONFIG } from "../abi/addresses.js";
+import { ADDRESSES, POOL_CONFIG } from "../abi/addresses.js";
 import { logger } from "../utils/logger.js";
-
-// ═══════════════════════════════════════════════════════════════════════════
-// CHAIN CONFIG
-// ═══════════════════════════════════════════════════════════════════════════
-
-const anvilChain: Chain = {
-  ...foundry,
-  id: 31337,
-  name: "Anvil",
-  rpcUrls: {
-    default: { http: [process.env.ANVIL_RPC_URL || "http://127.0.0.1:8545"] },
-  },
-};
 
 // ═══════════════════════════════════════════════════════════════════════════
 // CLIENTS
@@ -41,12 +26,15 @@ let _walletClient: WalletClient | null = null;
 
 export function getPublicClient(): PublicClient {
   if (!_publicClient) {
-    const rpcUrl = process.env.ANVIL_RPC_URL || "http://127.0.0.1:8545";
+    const rpcUrl = process.env.SEPOLIA_RPC_URL;
+    if (!rpcUrl) {
+      throw new Error("SEPOLIA_RPC_URL not set in environment");
+    }
     _publicClient = createPublicClient({
-      chain: anvilChain,
+      chain: sepolia,
       transport: http(rpcUrl),
     });
-    logger.info("Public client initialized", { rpcUrl });
+    logger.info("Public client initialized", { chain: "sepolia" });
   }
   return _publicClient;
 }
@@ -57,14 +45,17 @@ export function getWalletClient(): WalletClient {
     if (!privateKey) {
       throw new Error("DEPLOYER_PRIVATE_KEY not set in environment");
     }
+    const rpcUrl = process.env.SEPOLIA_RPC_URL;
+    if (!rpcUrl) {
+      throw new Error("SEPOLIA_RPC_URL not set in environment");
+    }
     const account = privateKeyToAccount(privateKey);
-    const rpcUrl = process.env.ANVIL_RPC_URL || "http://127.0.0.1:8545";
     _walletClient = createWalletClient({
       account,
-      chain: anvilChain,
+      chain: sepolia,
       transport: http(rpcUrl),
     });
-    logger.info("Wallet client initialized", { address: account.address });
+    logger.info("Wallet client initialized", { address: account.address, chain: "sepolia" });
   }
   return _walletClient;
 }
@@ -80,7 +71,7 @@ export function getDeployerAddress(): Address {
 
 export function getHookContract() {
   return getContract({
-    address: ANVIL_ADDRESSES.hook,
+    address: ADDRESSES.hook,
     abi: PositionExiterHookABI,
     client: {
       public: getPublicClient(),
@@ -134,11 +125,11 @@ export function computePoolId(
  */
 export function getDeployedPoolId(): `0x${string}` {
   return computePoolId(
-    ANVIL_ADDRESSES.token0,
-    ANVIL_ADDRESSES.token1,
+    ADDRESSES.token0,
+    ADDRESSES.token1,
     POOL_CONFIG.fee,
     POOL_CONFIG.tickSpacing,
-    ANVIL_ADDRESSES.hook
+    ADDRESSES.hook
   );
 }
 
@@ -147,11 +138,11 @@ export function getDeployedPoolId(): `0x${string}` {
  */
 export function getDeployedPoolKey() {
   return {
-    currency0: ANVIL_ADDRESSES.token0 as Address,
-    currency1: ANVIL_ADDRESSES.token1 as Address,
+    currency0: ADDRESSES.token0 as Address,
+    currency1: ADDRESSES.token1 as Address,
     fee: POOL_CONFIG.fee,
     tickSpacing: POOL_CONFIG.tickSpacing,
-    hooks: ANVIL_ADDRESSES.hook as Address,
+    hooks: ADDRESSES.hook as Address,
   };
 }
 
@@ -162,9 +153,9 @@ export function getDeployedPoolKey() {
 export async function ensureTokenApprovals(): Promise<void> {
   const wallet = getWalletClient();
   const deployer = getDeployerAddress();
-  const hookAddr = ANVIL_ADDRESSES.hook;
+  const hookAddr = ADDRESSES.hook;
 
-  for (const tokenAddr of [ANVIL_ADDRESSES.token0, ANVIL_ADDRESSES.token1]) {
+  for (const tokenAddr of [ADDRESSES.token0, ADDRESSES.token1]) {
     const token = getTokenContract(tokenAddr as Address);
     const allowance = await token.read.allowance([deployer, hookAddr]);
 
@@ -180,7 +171,7 @@ export async function ensureTokenApprovals(): Promise<void> {
 }
 
 /**
- * Check if the Anvil RPC is reachable and contracts are deployed
+ * Check if the RPC is reachable and contracts are deployed
  */
 export async function checkContractHealth(): Promise<{
   rpc: boolean;
@@ -189,7 +180,7 @@ export async function checkContractHealth(): Promise<{
 }> {
   try {
     const client = getPublicClient();
-    const hookCode = await client.getCode({ address: ANVIL_ADDRESSES.hook as Address });
+    const hookCode = await client.getCode({ address: ADDRESSES.hook as Address });
     const hookDeployed = !!hookCode && hookCode !== "0x";
 
     let poolInitialized = false;
@@ -197,7 +188,6 @@ export async function checkContractHealth(): Promise<{
       const hook = getHookContract();
       const poolId = getDeployedPoolId();
       const lastTick = await hook.read.lastTicks([poolId]);
-      // If lastTicks returns a value (even 0), pool was initialized
       poolInitialized = lastTick !== undefined;
     }
 

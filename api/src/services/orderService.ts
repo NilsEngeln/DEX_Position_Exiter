@@ -17,7 +17,7 @@ import {
   ensureTokenApprovals,
 } from "./contractClient.js";
 import { PositionExiterHookABI } from "../abi/PositionExiterHook.js";
-import { ANVIL_ADDRESSES } from "../abi/addresses.js";
+import { ADDRESSES } from "../abi/addresses.js";
 
 // In-memory order storage (maps API orderId to on-chain bytes32 orderId)
 interface StoredOrder {
@@ -126,7 +126,7 @@ export class OrderService {
 
       // Send the transaction
       const txHash = await wallet.writeContract({
-        address: ANVIL_ADDRESSES.hook as Address,
+        address: ADDRESSES.hook as Address,
         abi: PositionExiterHookABI,
         functionName: "createOrder",
         args: [createOrderParams],
@@ -270,7 +270,7 @@ export class OrderService {
       const publicClient = getPublicClient();
 
       const txHash = await wallet.writeContract({
-        address: ANVIL_ADDRESSES.hook as Address,
+        address: ADDRESSES.hook as Address,
         abi: PositionExiterHookABI,
         functionName: "cancelOrder",
         args: [order.onChainOrderId],
@@ -335,8 +335,7 @@ export class OrderService {
    * Estimate gas cost for order creation and closing
    */
   async estimateGasCost(_network: SupportedNetwork): Promise<bigint> {
-    // On Anvil, gas is free but we return a realistic estimate
-    return BigInt("15000000000000000"); // 0.015 ETH
+    return BigInt("15000000000000000"); // ~0.015 ETH estimate
   }
 
   /**
@@ -367,7 +366,7 @@ export class OrderService {
 
       try {
         const txHash = await wallet.writeContract({
-          address: ANVIL_ADDRESSES.hook as Address,
+          address: ADDRESSES.hook as Address,
           abi: PositionExiterHookABI,
           functionName: "closeExpiredOrder",
           args: [order.onChainOrderId],
