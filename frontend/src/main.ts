@@ -19,13 +19,15 @@ import { ERC20ABI } from "./abi/ERC20.js";
 
 const API_BASE_URL = import.meta.env.VITE_API_URL || "";
 
-// Anvil local chain
+// Anvil chain - use VITE_ANVIL_RPC_URL env var or default to localhost
+const ANVIL_RPC_URL = import.meta.env.VITE_ANVIL_RPC_URL || "http://127.0.0.1:8545";
+
 const anvil = defineChain({
   id: 31337,
   name: "Anvil",
   nativeCurrency: { name: "Ether", symbol: "ETH", decimals: 18 },
   rpcUrls: {
-    default: { http: ["http://127.0.0.1:8545"] },
+    default: { http: [ANVIL_RPC_URL] },
   },
 });
 
