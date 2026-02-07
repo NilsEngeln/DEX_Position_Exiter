@@ -972,28 +972,101 @@ contract ForkTest is Test {
 }
 ```
 
-## Deployment Plan
+## Current Implementation Status (POC)
 
-### Phase 1: Testnet (Base Sepolia)
+### What's Built and Working
 
-1. Deploy contracts
-2. Set up monitoring
-3. Internal testing
-4. Bug bounty program
+| Component | Status | Details |
+|-----------|--------|---------|
+| **PositionExiterHook.sol** | Done | Uniswap V4 hook with `afterSwap` + `afterInitialize`. Creates single-sided LP orders, tracks tick movement, manages order lifecycle. 32 passing integration tests. |
+| **Sepolia Deployment** | Done | Hook at `0x78015ED15d7584Ca4DD2F2D321c5a941959b5040`, pool initialized with mWETH/mUSDC mock tokens. Official V4 PoolManager at `0xE03A1074c86CFeDd5C142C4F04F1a1536e203543`. |
+| **API Server** | Done | Express + TypeScript. Endpoints: `POST /estimate`, `POST /exit` (x402-gated), `GET /status/:id`, `POST /cancel/:id`, `GET /orders/:owner`. |
+| **x402 Payment Gate** | Done | `POST /exit` returns 402 with payment requirements. Dev mode skips verification (`SKIP_PAYMENT=true`). |
+| **Tick Calculator** | Done | Calculates optimal tick range based on pool state, volatility estimate, and timeframe. Reads live pool state from Sepolia. |
+| **Keeper Service** | Done | Background loop (default 30s) polls active orders, calls `canClose()` on-chain, auto-settles filled/expired orders via `closeExpiredOrder()`. |
+| **Frontend** | Done | Vanilla TypeScript + Vite. MetaMask integration, Sepolia network switching, order creation/cancellation, Etherscan tx links. |
+| **On-chain order creation** | Done | API creates orders via deployer wallet on Sepolia. Events parsed for order ID + liquidity. |
+| **Fill status tracking** | Done | `_afterSwap` tracks tick movement. `getOrderFillStatus()` returns fill percent + current token balances. |
+| **Order cancellation** | Done | Owner can cancel active orders, tokens returned to recipient. |
+| **Expiry handling** | Done | `closeExpiredOrder()` settles orders past deadline, sends tokens to recipient. |
 
-### Phase 2: Limited Mainnet
+### What's NOT Implemented (POC Limitations)
 
-1. Deploy to Base mainnet
-2. Whitelist-only access
-3. Low value limits ($1,000 max)
-4. Monitor for issues
+| Feature | Current State | Production Requirement |
+|---------|--------------|----------------------|
+| **Auto-withdraw on fill** | Keeper polls and settles externally | Option C: `_afterSwap` detects full fill and auto-removes liquidity + transfers tokens in the same swap tx. Zero latency, no external trigger needed. |
+| **On-demand pool creation** | Pool pre-deployed with mock tokens | Hook detects if pool exists for a pair, creates at oracle price if not, then adds user's position. First order bootstraps the pool. |
+| **Real x402 payments** | `SKIP_PAYMENT=true` in dev | Integrate with Coinbase x402 facilitator. Verify payment proofs on-chain or via API. |
+| **User-signed transactions** | API's deployer wallet sends all txs | Users sign `createOrder` directly from MetaMask. Hook validates `msg.sender` as token owner. |
+| **Persistent storage** | In-memory `Map<string, Order>` | PostgreSQL with the schema defined in this spec. Survives API restarts. |
+| **Multi-pool support** | Single mWETH/mUSDC pool | Registry of supported pools. API accepts any token pair and routes to correct pool. |
+| **Price oracle integration** | Hardcoded 1:1 price for mock pool | Chainlink or Uniswap TWAP oracle for real market prices. Used for tick range calculation and pool initialization. |
+| **Gas escrow** | Not implemented | `GasEscrow.sol` — users prepay gas for settlement. Keeper gets paid from escrow. Remaining refunded. |
+| **TokenAllowanceGuard** | Direct ERC20 approvals | Scoped, time-limited, order-specific approvals as defined in this spec. |
+| **Chainlink Automation** | Centralized keeper loop in API | Decentralized keeper via Chainlink Automation or Gelato for guaranteed settlement. |
+| **Multi-chain** | Sepolia only | Deploy to Base, Arbitrum, Ethereum mainnet. |
+| **Rate limiting / abuse prevention** | None | Per-wallet order limits, minimum amounts, cooldowns. |
+| **Contract upgradability** | Immutable | Proxy pattern or versioned deployments with migration. |
+| **Audit** | Not audited | Professional security audit before mainnet. |
 
-### Phase 3: Public Launch
+### Auto-Settlement Architecture (Production Target)
 
-1. Remove whitelist
-2. Increase limits
-3. Multi-chain deployment
-4. Full feature set
+The current POC uses an off-chain **Keeper Service** that polls every 30 seconds and calls `closeExpiredOrder()` when an order is closeable. This works for the POC but adds latency and a centralized dependency.
+
+**Production target (Option C — hook-native auto-withdraw):**
+
+```
+User creates order → tokens deposited as single-sided LP
+                                ↓
+         Traders swap through the pool (normal Uniswap activity)
+                                ↓
+              _afterSwap detects tick crossed order's full range
+                                ↓
+         In the SAME transaction: remove liquidity + transfer to recipient
+                                ↓
+                    User receives tokens automatically
+```
+
+Key implementation details for Option C:
+1. In `_afterSwap`, after updating `lastTicks`, iterate active orders for the pool
+2. For each order where `currentTick >= tickUpper` (sell token0) or `currentTick <= tickLower` (sell token1), the order is fully filled
+3. Call `poolManager.unlock()` to remove the liquidity position
+4. Transfer the output tokens directly to `order.recipient`
+5. Emit `OrderFilled` event
+6. Gas cost is borne by the swapper — need to ensure this is reasonable (batch limit)
+
+The keeper would remain as a fallback only for expired orders that were never fully filled.
+
+### Production Roadmap
+
+#### Phase 1: Testnet Hardening
+- Implement user-signed transactions (remove deployer wallet dependency)
+- Add PostgreSQL persistence
+- Integrate real x402 payment verification
+- Add multi-pool support with real Sepolia tokens (WETH, USDC)
+- Chainlink price oracle integration
+
+#### Phase 2: Auto-Settlement (Option C)
+- Modify `_afterSwap` to detect when an order's tick range is fully crossed
+- In the same callback, remove the liquidity and transfer tokens to recipient
+- This eliminates the keeper for filled orders entirely
+- Keep keeper only for expired orders (deadline reached but not fully filled)
+- Gas optimization: batch-process multiple filled orders in one callback
+
+#### Phase 3: Mainnet (Base)
+- Deploy hook + pool for real WETH/USDC on Base
+- Gas escrow system for settlement costs
+- Chainlink Automation as decentralized keeper backup
+- Professional audit
+- Whitelist-only launch with $1,000 max order size
+
+#### Phase 4: Public Launch
+- Remove whitelist
+- Increase limits
+- Add more token pairs
+- Multi-chain deployment (Arbitrum, Ethereum mainnet)
+- Analytics dashboard
+- On-demand pool creation for arbitrary pairs
 
 ## Gas Optimization
 

@@ -1,5 +1,7 @@
 // Contract addresses — reads from environment, with Sepolia V4 defaults
 // After deploying with DeploySepolia.s.sol, fill in the addresses in .env
+import dotenv from "dotenv";
+dotenv.config();
 
 export const ADDRESSES = {
   poolManager: (process.env.POOL_MANAGER_ADDRESS || "0xE03A1074c86CFeDd5C142C4F04F1a1536e203543") as `0x${string}`,

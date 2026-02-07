@@ -4,9 +4,10 @@ import cors from "cors";
 import morgan from "morgan";
 import dotenv from "dotenv";
 
-import { exitRoutes } from "./routes/exit.js";
+import { exitRoutes, orderService } from "./routes/exit.js";
 import { healthRoutes } from "./routes/health.js";
 import { errorHandler } from "./middleware/errorHandler.js";
+import { KeeperService } from "./services/keeperService.js";
 import { logger } from "./utils/logger.js";
 
 // Load environment variables
@@ -68,6 +69,20 @@ app.use((_req, res) => {
 app.listen(PORT, () => {
   logger.info(`DEX Position Exiter API running on port ${PORT}`);
   logger.info(`Environment: ${process.env.NODE_ENV || "development"}`);
+
+  // Start keeper service for automatic order settlement
+  const keeperIntervalMs = Number(process.env.KEEPER_INTERVAL_MS) || 30_000;
+  const keeper = new KeeperService(orderService, keeperIntervalMs);
+  keeper.start();
+
+  // Graceful shutdown
+  const shutdown = () => {
+    logger.info("Shutting down...");
+    keeper.stop();
+    process.exit(0);
+  };
+  process.on("SIGINT", shutdown);
+  process.on("SIGTERM", shutdown);
 });
 
 export default app;

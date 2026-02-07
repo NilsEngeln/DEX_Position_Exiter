@@ -22,6 +22,7 @@ cd contracts
 forge install uniswap/v4-core --no-git
 forge install uniswap/v4-periphery --no-git
 forge install openzeppelin/openzeppelin-contracts --no-git
+forge install OpenZeppelin/uniswap-hooks --no-git
 forge install foundry-rs/forge-std --no-git
 
 # If the above still fails, try without any flags:
