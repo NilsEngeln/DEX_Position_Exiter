@@ -350,6 +350,47 @@ export class OrderService {
   }
 
   /**
+   * Get all active orders that have on-chain IDs (for keeper service)
+   */
+  getActiveOnChainOrders(): Array<{ orderId: string; onChainOrderId: `0x${string}` }> {
+    const result: Array<{ orderId: string; onChainOrderId: `0x${string}` }> = [];
+    const zeroId = "0x" + "0".repeat(64);
+
+    for (const order of this.orders.values()) {
+      if (order.status !== "active") continue;
+      if (order.onChainOrderId === zeroId) continue;
+      result.push({
+        orderId: order.orderId,
+        onChainOrderId: order.onChainOrderId,
+      });
+    }
+
+    return result;
+  }
+
+  /**
+   * Mark an order as settled by the keeper
+   */
+  markOrderSettled(orderId: string, reason: string, txHash?: string): void {
+    const order = this.orders.get(orderId);
+    if (!order) return;
+
+    const isExpired = reason.toLowerCase().includes("expired") || reason.toLowerCase().includes("deadline");
+    order.status = isExpired ? "expired" : "filled";
+    order.closedAt = new Date();
+    order.closeReason = `Auto-settled: ${reason}`;
+    if (txHash) {
+      order.txHash = txHash;
+    }
+
+    logger.info("Order marked as settled", {
+      orderId,
+      status: order.status,
+      reason,
+    });
+  }
+
+  /**
    * Process expired orders
    */
   async processExpiredOrders(): Promise<void> {

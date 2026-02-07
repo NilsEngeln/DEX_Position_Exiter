@@ -14,7 +14,7 @@ import { logger } from "../utils/logger.js";
 export const exitRoutes = Router();
 
 const tickCalculator = new TickCalculatorService();
-const orderService = new OrderService();
+export const orderService = new OrderService();
 
 // ═══════════════════════════════════════════════════════════════════════════
 // POST /exit - Create exit order (x402 payment-gated)
